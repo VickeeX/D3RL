@@ -127,35 +127,31 @@ class PAACLearner(ActorLearner):
 
                 episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
 
-            print("******")
-            data = []
-            for e, (s, a, r) in enumerate(zip(states, actions, rewards)):
-                data.append((e, s, a, r))
-            self.req.send_zipped_pickle(data)
-            # self.req.send_zipped_pickle(enumerate(zip(states, actions, rewards)))
+            # states: (5,32,84,84,4), rewards: (5,32), over: (5,32), actions: (5,32,6)
+            self.req.send_zipped_pickle([states, rewards, episodes_over_masks, actions, values])
             _ = self.req.recv_string()
-            print("Send data okay.")
+            print("Send batch data okay.")
             print("******")
 
-            # for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
-            #         total_episode_rewards[e] += actual_reward
-            #         actual_reward = self.rescale_reward(actual_reward)
-            #         rewards[t, e] = actual_reward
-            #
-            #         emulator_steps[e] += 1
-            #         self.global_step += 1
-            #         if episode_over:
-            #             total_rewards.append(total_episode_rewards[e])
-            #             episode_summary = tf.Summary(value=[
-            #                 tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
-            #                 tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
-            #             ])
-            #             self.summary_writer.add_summary(episode_summary, self.global_step)
-            #             self.summary_writer.flush()
-            #             total_episode_rewards[e] = 0
-            #             emulator_steps[e] = 0
-            #             actions_sum[e] = np.zeros(self.num_actions)
-            #
+            for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
+                total_episode_rewards[e] += actual_reward
+                actual_reward = self.rescale_reward(actual_reward)
+                rewards[t, e] = actual_reward
+
+                emulator_steps[e] += 1
+                self.global_step += 1
+                if episode_over:
+                    total_rewards.append(total_episode_rewards[e])
+                    episode_summary = tf.Summary(value=[
+                        tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
+                        tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
+                    ])
+                    self.summary_writer.add_summary(episode_summary, self.global_step)
+                    self.summary_writer.flush()
+                    total_episode_rewards[e] = 0
+                    emulator_steps[e] = 0
+                    actions_sum[e] = np.zeros(self.num_actions)
+
             # nest_state_value = self.session.run(
             #     self.network.output_layer_v,
             #     feed_dict={self.network.input_ph: shared_states})
@@ -185,7 +181,7 @@ class PAACLearner(ActorLearner):
             #
             # self.summary_writer.add_summary(summaries, self.global_step)
             # self.summary_writer.flush()
-            #
+
             counter += 1
 
             if counter % (2048 / self.emulator_counts) == 0:
