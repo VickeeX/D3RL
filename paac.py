@@ -148,10 +148,9 @@ class PAACLearner(ActorLearner):
 
             # states: (5,32,84,84,4), rewards: (5,32), over: (5,32), actions: (5,32,6)
             self.req.send_zipped_pickle([states, rewards, episodes_over_masks, actions, values])
-            _ = self.req.recv_string()
+            msg = self.req.recv_string()
             print("Send batch data okay.")
             print("******")
-
 
             # nest_state_value = self.session.run(
             #     self.network.output_layer_v,
@@ -195,6 +194,11 @@ class PAACLearner(ActorLearner):
                                      (global_steps - global_step_start) / (curr_time - start_time),
                                      last_ten))
             self.save_vars()
+
+            if msg == "stop":
+                print("Learner has received enough batch data.")
+                print("Stop sampling.")
+                break
 
         self.cleanup()
 
