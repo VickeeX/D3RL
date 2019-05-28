@@ -1,5 +1,6 @@
 import time, logging, zmq
-from multiprocessing import Queue
+from flask import Flask, request
+from multiprocessing import Queue, Process
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_uint, c_float
 from actor_learner import *
@@ -7,12 +8,28 @@ from emulator_runner import EmulatorRunner
 from runners import Runners
 from zmq_serialize import SerializingContext
 
+flask_file_server = Flask(__name__)
+
+
+# TODO: shared tag -- if the checkpoint has been updated, restore the network
+@flask_file_server.route('/d3rl/network', methods=['POST'])
+def upload_network():
+    network_ckpt = request.files.getlist('files')
+    file_num = 0
+    for f in network_ckpt:
+        f.save("/home/cloud/D3RL_ZMQ/logs/upload/" + f.filename)
+        file_num += 1
+    print("receive network checkpoint: %d files ok" % file_num)
+    return '{"code":"ok","file_num":%d}' % file_num
+
 
 class PAACLearner(ActorLearner):
     def __init__(self, network_creator, environment_creator, args):
         super(PAACLearner, self).__init__(network_creator, environment_creator, args)
         self.workers = args.emulator_workers
         self.req = self.__create_zmq_req_socket()
+        self.flask_file_server_proc = Process(target=flask_file_server.run,
+                                              kwargs={'host': '127.0.0.1', 'port': 6667})
 
     @staticmethod
     def create_zmq_req_socket():
@@ -66,10 +83,11 @@ class PAACLearner(ActorLearner):
         return np.frombuffer(shared, dtype).reshape(shape)
 
     def train(self):
+        self.flask_file_server_proc.start()
+
         """
         Main actor learner loop for parallel advantage actor critic learning.
         """
-
         self.global_step = self.init_network()
 
         logging.debug("Starting training at Step {}".format(self.global_step))
@@ -205,3 +223,4 @@ class PAACLearner(ActorLearner):
     def cleanup(self):
         super(PAACLearner, self).cleanup()
         self.runners.stop()
+        self.flask_file_server_proc.terminate()
