@@ -1,4 +1,4 @@
-import time, logging, zmq
+import time, logging, zmq, re
 from flask import Flask, request
 from multiprocessing import Queue, Process
 from multiprocessing.sharedctypes import RawArray
@@ -7,6 +7,7 @@ from actor_learner import *
 from emulator_runner import EmulatorRunner
 from runners import Runners
 from zmq_serialize import SerializingContext
+from os import listdir
 
 flask_file_server = Flask(__name__)
 
@@ -30,6 +31,7 @@ class PAACLearner(ActorLearner):
         self.req = self.__create_zmq_req_socket()
         self.flask_file_server_proc = Process(target=flask_file_server.run,
                                               kwargs={'host': '127.0.0.1', 'port': 6667})
+        self.latest_ckpt = 0
 
     @staticmethod
     def create_zmq_req_socket():
@@ -217,6 +219,15 @@ class PAACLearner(ActorLearner):
                 print("Learner has received enough batch data.")
                 print("Stop sampling.")
                 break
+
+            """ restore network if there's new checkpoint from GPU-Learner
+            """
+            cur_ckpt = 0
+            for x in listdir("/home/cloud/D3RL_ZMQ/logs/upload/"):
+                cur_ckpt = max(cur_ckpt, int(re.findall('\d+(?=\.)', x)[0]))
+            if self.latest_ckpt < cur_ckpt:
+                self.network_saver.restore(self.session, "/home/cloud/D3RL_ZMQ/logs/upload/")
+                self.latest_ckpt = cur_ckpt
 
         self.cleanup()
 

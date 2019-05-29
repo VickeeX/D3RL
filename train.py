@@ -96,6 +96,7 @@ def get_arg_parser():
     parser.add_argument('-ew', '--emulator_workers', default=8, type=int, help="The amount of emulator workers per agent. Default is 8.", dest="emulator_workers")
     parser.add_argument('-df', '--debugging_folder', default='logs/', type=str, help="Folder where to save the debugging information.", dest="debugging_folder")
     parser.add_argument('-rs', '--random_start', default=True, type=bool_arg, help="Whether or not to start with 30 noops for each env. Default True", dest="random_start")
+    # parser.add_argument('-cd', '--ckpt_dir', default='logs/upload/', type=str, help="Directory where the checkpoints from GPU-Learner are stored. Default = logs/upload/", dest="ckpt_dir")
     return parser
 
 
