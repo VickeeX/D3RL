@@ -1,26 +1,30 @@
 import time, logging, zmq, re
 from flask import Flask, request
-from multiprocessing import Queue, Process
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_uint, c_float
 from actor_learner import *
 from emulator_runner import EmulatorRunner
 from runners import Runners
 from zmq_serialize import SerializingContext
-from os import listdir
 
 flask_file_server = Flask(__name__)
 
 
-# TODO: shared tag -- if the checkpoint has been updated, restore the network
 @flask_file_server.route('/d3rl/network', methods=['POST'])
 def upload_network():
     network_ckpt = request.files.getlist('files')
-    file_num = 0
+    file_num, ckpt_num = 0, ""
     for f in network_ckpt:
         f.save("/home/cloud/D3RL_ZMQ/logs/upload/" + f.filename)
         file_num += 1
-    print("receive network checkpoint: %d files ok" % file_num)
+        if ckpt_num == "":
+            ckpt_num = f.filename.splite(".")[0]
+
+    with open("/home/cloud/D3RL_ZMQ/logs/upload/checkpoint", "w") as f:
+        f.writelines(["model_checkpoint_path: \"" + ckpt_num + "\"\n",
+                      "all_model_checkpoint_paths, \"" + ckpt_num + "\""])
+
+    print("receive network checkpoint: %s, %d files ok" % (ckpt_num, file_num))
     return '{"code":"ok","file_num":%d}' % file_num
 
 
@@ -31,7 +35,7 @@ class PAACLearner(ActorLearner):
         self.req = self.__create_zmq_req_socket()
         self.flask_file_server_proc = Process(target=flask_file_server.run,
                                               kwargs={'host': '127.0.0.1', 'port': 6667})
-        self.latest_ckpt = 0
+        self.latest_ckpt = "-0"
 
     @staticmethod
     def create_zmq_req_socket():
@@ -169,8 +173,8 @@ class PAACLearner(ActorLearner):
             # states: (5,32,84,84,4), rewards: (5,32), over: (5,32), actions: (5,32,6)
             self.req.send_zipped_pickle([states, rewards, episodes_over_masks, actions, values])
             msg = self.req.recv_string()
-            print("Send batch data okay.")
-            print("******")
+            # print("Send batch data okay.")
+            # print("******")
 
             # nest_state_value = self.session.run(
             #     self.network.output_layer_v,
@@ -213,7 +217,7 @@ class PAACLearner(ActorLearner):
                                      self.max_local_steps * self.emulator_counts / (curr_time - loop_start_time),
                                      (global_steps - global_step_start) / (curr_time - start_time),
                                      last_ten))
-            self.save_vars()
+            # self.save_vars()
 
             if msg == "stop":
                 print("Learner has received enough batch data.")
@@ -222,10 +226,9 @@ class PAACLearner(ActorLearner):
 
             """ restore network if there's new checkpoint from GPU-Learner
             """
-            cur_ckpt = 0
-            for x in listdir("/home/cloud/D3RL_ZMQ/logs/upload/"):
-                cur_ckpt = max(cur_ckpt, int(re.findall('\d+(?=\.)', x)[0]))
-            if self.latest_ckpt < cur_ckpt:
+
+            cur_ckpt = tf.train.latest_checkpoint("/home/cloud/D3RL_ZMQ/logs/upload/")
+            if cur_ckpt and self.latest_ckpt != cur_ckpt:
                 self.network_saver.restore(self.session, "/home/cloud/D3RL_ZMQ/logs/upload/")
                 self.latest_ckpt = cur_ckpt
 
