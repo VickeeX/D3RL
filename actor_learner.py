@@ -6,12 +6,11 @@ from logger_utils import variable_summaries
 import os
 
 CHECKPOINT_INTERVAL = 1000000
- 
+
 
 class ActorLearner(Process):
-    
     def __init__(self, network_creator, environment_creator, args):
-        
+
         super(ActorLearner, self).__init__()
 
         self.global_step = 0
@@ -25,6 +24,7 @@ class ActorLearner(Process):
         self.debugging_folder = args.debugging_folder
         self.network_checkpoint_folder = os.path.join(self.debugging_folder, 'checkpoints/')
         self.optimizer_checkpoint_folder = os.path.join(self.debugging_folder, 'optimizer_checkpoints/')
+        self.upload_checkpoint_folder = os.path.join(self.debugging_folder, 'upload/')
         self.last_saving_step = 0
         self.summary_writer = tf.summary.FileWriter(os.path.join(self.debugging_folder, 'tf'))
 
@@ -54,13 +54,13 @@ class ActorLearner(Process):
         elif args.clip_norm_type == 'global':
             # Clip network grads by network norm
             gradients_n_norm = tf.clip_by_global_norm(
-                [g for g, v in grads_and_vars], args.clip_norm)
+                    [g for g, v in grads_and_vars], args.clip_norm)
             global_norm = tf.identity(gradients_n_norm[1], name='global_norm')
             grads_and_vars = list(zip(gradients_n_norm[0], [v for g, v in grads_and_vars]))
         elif args.clip_norm_type == 'local':
             # Clip layer grads by layer norm
             gradients = [tf.clip_by_norm(
-                g, args.clip_norm) for g in grads_and_vars]
+                    g, args.clip_norm) for g in grads_and_vars]
             grads_and_vars = list(zip(gradients, [v for g, v in grads_and_vars]))
             global_norm = tf.global_norm([g for g, v in grads_and_vars], name='global_norm')
         else:
@@ -106,6 +106,8 @@ class ActorLearner(Process):
             os.makedirs(self.network_checkpoint_folder)
         if not os.path.exists(self.optimizer_checkpoint_folder):
             os.makedirs(self.optimizer_checkpoint_folder)
+        if not os.path.exists(self.upload_checkpoint_folder):
+            os.makedirs(self.upload_checkpoint_folder)
 
         last_saving_step = self.network.init(self.network_checkpoint_folder, self.network_saver, self.session)
 
@@ -125,4 +127,3 @@ class ActorLearner(Process):
     def cleanup(self):
         self.save_vars(True)
         self.session.close()
-

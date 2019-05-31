@@ -18,13 +18,12 @@ def upload_network():
         f.save("/home/cloud/D3RL_ZMQ/logs/upload/" + f.filename)
         file_num += 1
         if ckpt_num == "":
-            ckpt_num = f.filename.splite(".")[0]
+            ckpt_num = f.filename.split(".")[0]
 
     with open("/home/cloud/D3RL_ZMQ/logs/upload/checkpoint", "w") as f:
         f.writelines(["model_checkpoint_path: \"" + ckpt_num + "\"\n",
-                      "all_model_checkpoint_paths, \"" + ckpt_num + "\""])
+                      "all_model_checkpoint_paths: \"" + ckpt_num + "\""])
 
-    print("receive network checkpoint: %s, %d files ok" % (ckpt_num, file_num))
     return '{"code":"ok","file_num":%d}' % file_num
 
 
@@ -87,6 +86,10 @@ class PAACLearner(ActorLearner):
         shape = array.shape
         shared = RawArray(dtype, array.reshape(-1))
         return np.frombuffer(shared, dtype).reshape(shape)
+
+    def send_zmq_batch_data(self, data):
+        self.req.send_zipped_pickle(data)
+        msg = self.req.recv_string()
 
     def train(self):
         self.flask_file_server_proc.start()
@@ -171,8 +174,10 @@ class PAACLearner(ActorLearner):
                         actions_sum[e] = np.zeros(self.num_actions)
 
             # states: (5,32,84,84,4), rewards: (5,32), over: (5,32), actions: (5,32,6)
-            self.req.send_zipped_pickle([states, rewards, episodes_over_masks, actions, values])
-            msg = self.req.recv_string()
+            # self.req.send_zipped_pickle([states, rewards, episodes_over_masks, actions, values])
+            # msg = self.req.recv_string()
+            Process(target=self.send_zmq_batch_data,
+                    kwargs={"data": [states, rewards, episodes_over_masks, actions, values]}).start()
             # print("Send batch data okay.")
             # print("******")
 
@@ -219,17 +224,17 @@ class PAACLearner(ActorLearner):
                                      last_ten))
             # self.save_vars()
 
-            if msg == "stop":
-                print("Learner has received enough batch data.")
-                print("Stop sampling.")
-                break
+            # if msg == "stop":
+            #     print("Learner has received enough batch data.")
+            #     print("Stop sampling.")
+            #     break
 
             """ restore network if there's new checkpoint from GPU-Learner
             """
 
             cur_ckpt = tf.train.latest_checkpoint("/home/cloud/D3RL_ZMQ/logs/upload/")
             if cur_ckpt and self.latest_ckpt != cur_ckpt:
-                self.network_saver.restore(self.session, "/home/cloud/D3RL_ZMQ/logs/upload/")
+                self.network_saver.restore(self.session, cur_ckpt)
                 self.latest_ckpt = cur_ckpt
 
         self.cleanup()

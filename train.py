@@ -23,6 +23,8 @@ def bool_arg(string):
 
 def main(args):
     logging.debug('Configuration: {}'.format(args))
+    logging.getLogger("wergzrug").setLevel(logging.WARNING)
+    logging.getLogger("tensorflow").setLevel(logging.WARNING)
 
     network_creator, env_creator = get_network_and_environment_creator(args)
 
