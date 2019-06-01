@@ -31,20 +31,9 @@ class PAACLearner(ActorLearner):
     def __init__(self, network_creator, environment_creator, args):
         super(PAACLearner, self).__init__(network_creator, environment_creator, args)
         self.workers = args.emulator_workers
-        self.req = self.__create_zmq_req_socket()
         self.flask_file_server_proc = Process(target=flask_file_server.run,
                                               kwargs={'host': '127.0.0.1', 'port': 6667})
         self.latest_ckpt = "-0"
-
-    @staticmethod
-    def create_zmq_req_socket():
-        ctx = SerializingContext()
-        req = ctx.socket(zmq.REQ)
-        req.connect("tcp://127.0.0.1:6666")
-        return req
-
-    def __create_zmq_req_socket(self):
-        return PAACLearner.create_zmq_req_socket()
 
     @staticmethod
     def choose_next_actions(network, num_actions, states, session):
@@ -87,9 +76,14 @@ class PAACLearner(ActorLearner):
         shared = RawArray(dtype, array.reshape(-1))
         return np.frombuffer(shared, dtype).reshape(shape)
 
+    # TODO: build sessionPool to resue Context and ReqSocket
     def send_zmq_batch_data(self, data):
-        self.req.send_zipped_pickle(data)
-        msg = self.req.recv_string()
+        ctx = SerializingContext()
+        req = ctx.socket(zmq.REQ)
+        req.connect("tcp://127.0.0.1:6666")
+        req.send_zipped_pickle(data)
+        _ = req.recv_string()
+        req.close()
 
     def train(self):
         self.flask_file_server_proc.start()
