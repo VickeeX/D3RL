@@ -14,6 +14,8 @@ flask_file_server = Flask(__name__)
 def upload_network():
     network_ckpt = request.files.getlist('files')
     file_num, ckpt_num = 0, ""
+    # for f in os.listdir("/home/cloud/D3RL_ZMQ/logs/upload/"):
+    #     os.remove("/home/cloud/D3RL_ZMQ/logs/upload/" + f)
     for f in network_ckpt:
         f.save("/home/cloud/D3RL_ZMQ/logs/upload/" + f.filename)
         file_num += 1
@@ -175,35 +177,6 @@ class PAACLearner(ActorLearner):
             # print("Send batch data okay.")
             # print("******")
 
-            # nest_state_value = self.session.run(
-            #     self.network.output_layer_v,
-            #     feed_dict={self.network.input_ph: shared_states})
-            #
-            # estimated_return = np.copy(nest_state_value)
-            #
-            # for t in reversed(range(max_local_steps)):
-            #     estimated_return = rewards[t] + self.gamma * estimated_return * episodes_over_masks[t]
-            #     y_batch[t] = np.copy(estimated_return)
-            #     adv_batch[t] = estimated_return - values[t]
-            #
-            # flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + list(shared_states.shape)[1:])
-            # flat_y_batch = y_batch.reshape(-1)
-            # flat_adv_batch = adv_batch.reshape(-1)
-            # flat_actions = actions.reshape(max_local_steps * self.emulator_counts, self.num_actions)
-            #
-            # lr = self.get_lr()
-            # feed_dict = {self.network.input_ph: flat_states,
-            #              self.network.critic_target_ph: flat_y_batch,
-            #              self.network.selected_action_ph: flat_actions,
-            #              self.network.adv_actor_ph: flat_adv_batch,
-            #              self.learning_rate: lr}
-            #
-            # _, summaries = self.session.run(
-            #     [self.train_step, summaries_op],
-            #     feed_dict=feed_dict)
-            #
-            # self.summary_writer.add_summary(summaries, self.global_step)
-            # self.summary_writer.flush()
 
             counter += 1
 
@@ -225,11 +198,13 @@ class PAACLearner(ActorLearner):
 
             """ restore network if there's new checkpoint from GPU-Learner
             """
-
-            cur_ckpt = tf.train.latest_checkpoint("/home/cloud/D3RL_ZMQ/logs/upload/")
-            if cur_ckpt and self.latest_ckpt != cur_ckpt:
-                self.network_saver.restore(self.session, cur_ckpt)
-                self.latest_ckpt = cur_ckpt
+            try:
+                cur_ckpt = tf.train.latest_checkpoint(self.upload_checkpoint_folder)
+                if cur_ckpt and self.latest_ckpt != cur_ckpt:
+                    self.network_saver.restore(self.session, cur_ckpt)
+                    self.latest_ckpt = cur_ckpt
+            except ValueError:  # if the checkpoint is written: state error
+                pass
 
         self.cleanup()
 
