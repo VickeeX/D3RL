@@ -6,6 +6,7 @@ from actor_learner import *
 from emulator_runner import EmulatorRunner
 from runners import Runners
 from zmq_serialize import SerializingContext
+from multiprocessing import Queue
 
 flask_file_server = Flask(__name__)
 
@@ -14,28 +15,42 @@ flask_file_server = Flask(__name__)
 def upload_network():
     network_ckpt = request.files.getlist('files')
     file_num, ckpt_num = 0, ""
-    # for f in os.listdir("/home/cloud/D3RL_ZMQ/logs/upload/"):
-    #     os.remove("/home/cloud/D3RL_ZMQ/logs/upload/" + f)
     for f in network_ckpt:
-        f.save("/home/cloud/D3RL_ZMQ/logs/upload/" + f.filename)
+        f.save("/root/D3RL_ZMQ_Vtrace/logs/upload/" + f.filename)
         file_num += 1
         if ckpt_num == "":
             ckpt_num = f.filename.split(".")[0]
 
-    with open("/home/cloud/D3RL_ZMQ/logs/upload/checkpoint", "w") as f:
+    with open("/root/D3RL_ZMQ_Vtrace/logs/upload/checkpoint", "w") as f:
         f.writelines(["model_checkpoint_path: \"" + ckpt_num + "\"\n",
                       "all_model_checkpoint_paths: \"" + ckpt_num + "\""])
 
     return '{"code":"ok","file_num":%d}' % file_num
 
 
+def send_zmq_batch_data(queue):
+    ctx = SerializingContext()
+    req = ctx.socket(zmq.REQ)
+    req.connect("tcp://127.0.0.1:6666")
+    while True:
+        data = queue.get()
+        req.send_zipped_pickle(data)
+        msg = req.recv_string()
+        if msg == "stop":
+            break
+    req.close()
+
+
 class PAACLearner(ActorLearner):
     def __init__(self, network_creator, environment_creator, args):
         super(PAACLearner, self).__init__(network_creator, environment_creator, args)
         self.workers = args.emulator_workers
-        self.flask_file_server_proc = Process(target=flask_file_server.run,
-                                              kwargs={'host': '127.0.0.1', 'port': 6667})
         self.latest_ckpt = "-0"
+        self.send_batch_queue = Queue()
+
+        self.flask_file_server_proc = Process(target=flask_file_server.run,
+                                              kwargs={'host': '127.0.0.1', 'port': 6668})
+        self.send_zmq_batch_data_proc = Process(target=send_zmq_batch_data, kwargs={'queue': self.send_batch_queue})
 
     @staticmethod
     def choose_next_actions(network, num_actions, states, session):
@@ -78,17 +93,9 @@ class PAACLearner(ActorLearner):
         shared = RawArray(dtype, array.reshape(-1))
         return np.frombuffer(shared, dtype).reshape(shape)
 
-    # TODO: build sessionPool to resue Context and ReqSocket
-    def send_zmq_batch_data(self, data):
-        ctx = SerializingContext()
-        req = ctx.socket(zmq.REQ)
-        req.connect("tcp://127.0.0.1:6666")
-        req.send_zipped_pickle(data)
-        _ = req.recv_string()
-        req.close()
-
     def train(self):
         self.flask_file_server_proc.start()
+        self.send_zmq_batch_data_proc.start()
 
         """
         Main actor learner loop for parallel advantage actor critic learning.
@@ -121,7 +128,7 @@ class PAACLearner(ActorLearner):
         y_batch = np.zeros((self.max_local_steps, self.emulator_counts))
         adv_batch = np.zeros((self.max_local_steps, self.emulator_counts))
         rewards = np.zeros((self.max_local_steps, self.emulator_counts))
-        states = np.zeros([self.max_local_steps] + list(shared_states.shape), dtype=np.uint8)
+        states = np.zeros([self.max_local_steps + 1] + list(shared_states.shape), dtype=np.uint8)
         actions = np.zeros((self.max_local_steps, self.emulator_counts, self.num_actions))
         values = np.zeros((self.max_local_steps, self.emulator_counts))
         episodes_over_masks = np.zeros((self.max_local_steps, self.emulator_counts))
@@ -169,13 +176,9 @@ class PAACLearner(ActorLearner):
                         emulator_steps[e] = 0
                         actions_sum[e] = np.zeros(self.num_actions)
 
+            states[-1] = shared_states
+            self.send_batch_queue.put([states, rewards, episodes_over_masks, actions, values])
             # states: (5,32,84,84,4), rewards: (5,32), over: (5,32), actions: (5,32,6)
-            # self.req.send_zipped_pickle([states, rewards, episodes_over_masks, actions, values])
-            # msg = self.req.recv_string()
-            Process(target=self.send_zmq_batch_data,
-                    kwargs={"data": [states, rewards, episodes_over_masks, actions, values]}).start()
-            # print("Send batch data okay.")
-            # print("******")
 
 
             counter += 1
@@ -189,12 +192,6 @@ class PAACLearner(ActorLearner):
                                      self.max_local_steps * self.emulator_counts / (curr_time - loop_start_time),
                                      (global_steps - global_step_start) / (curr_time - start_time),
                                      last_ten))
-            # self.save_vars()
-
-            # if msg == "stop":
-            #     print("Learner has received enough batch data.")
-            #     print("Stop sampling.")
-            #     break
 
             """ restore network if there's new checkpoint from GPU-Learner
             """
@@ -202,6 +199,12 @@ class PAACLearner(ActorLearner):
                 cur_ckpt = tf.train.latest_checkpoint(self.upload_checkpoint_folder)
                 if cur_ckpt and self.latest_ckpt != cur_ckpt:
                     self.network_saver.restore(self.session, cur_ckpt)
+                    if os.path.exists("/root/D3RL_ZMQ_Vtrace/logs/upload/" + str(self.latest_ckpt) + ".meta"):
+                        os.system(
+                                "rm /root/D3RL_ZMQ_Vtrace/logs/upload/" + str(
+                                        self.latest_ckpt) + ".data-00000-of-00001")
+                        os.system("rm /root/D3RL_ZMQ_Vtrace/logs/upload/" + str(self.latest_ckpt) + ".index")
+                        os.system("rm /root/D3RL_ZMQ_Vtrace/logs/upload/" + str(self.latest_ckpt) + ".meta")
                     self.latest_ckpt = cur_ckpt
             except ValueError:  # if the checkpoint is written: state error
                 pass
@@ -212,3 +215,4 @@ class PAACLearner(ActorLearner):
         super(PAACLearner, self).cleanup()
         self.runners.stop()
         self.flask_file_server_proc.terminate()
+        self.send_zmq_batch_data_proc.terminate()
